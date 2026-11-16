@@ -8,13 +8,13 @@ import {
     Button,
     Autocomplete,
     Box,
+    MenuItem,
 } from '@mui/material';
 import {
-    CodecBestQuality,
-    CodecDefault,
     codecName,
+    getAvailableCodecs,
     loadSettings,
-    PreferredCodec,
+    presetName,
     Settings,
     VideoDisplayMode,
 } from './settings';
@@ -27,12 +27,7 @@ export interface SettingDialogProps {
     saveSettings: (s: Settings) => void;
 }
 
-const getAvailableCodecs = (): PreferredCodec[] => {
-    if ('getCapabilities' in RTCRtpSender) {
-        return RTCRtpSender.getCapabilities('video')?.codecs ?? [];
-    }
-    return [];
-};
+const BrowserDefault = '';
 
 const NativeCodecs = getAvailableCodecs();
 
@@ -45,7 +40,8 @@ export const SettingDialog = ({open, setOpen, updateName, saveSettings}: Setting
         setOpen(false);
     };
 
-    const {name, preferCodec, displayMode, framerate, width, height} = settingsInput;
+    const {name, preferCodec, displayMode, framerate, width, height, maxBitrate} = settingsInput;
+    const selectedCodec = NativeCodecs.find((c) => c.mimeType === preferCodec?.mimeType);
 
     return (
         <Dialog open={open} onClose={() => setOpen(false)} maxWidth={'xs'} fullWidth>
@@ -65,27 +61,60 @@ export const SettingDialog = ({open, setOpen, updateName, saveSettings}: Setting
                         />
                     </Box>
                     {NativeCodecs.length > 0 ? (
-                        <Box sx={{paddingY: 1}}>
-                            <Autocomplete<PreferredCodec>
-                                options={[CodecBestQuality, CodecDefault, ...NativeCodecs]}
-                                getOptionLabel={({mimeType, sdpFmtpLine}) =>
-                                    codecName(mimeType) + (sdpFmtpLine ? ` (${sdpFmtpLine})` : '')
-                                }
-                                value={preferCodec}
-                                isOptionEqualToValue={(a, b) =>
-                                    a.mimeType === b.mimeType && a.sdpFmtpLine === b.sdpFmtpLine
-                                }
-                                fullWidth
-                                onChange={(_, value) =>
+                        <Box sx={{paddingY: 1, display: 'flex', gap: 1}}>
+                            <TextField
+                                select
+                                label="Codec"
+                                value={selectedCodec?.mimeType ?? BrowserDefault}
+                                onChange={(e) =>
                                     setSettingsInput((c) => ({
                                         ...c,
-                                        preferCodec: value ?? undefined,
+                                        preferCodec:
+                                            e.target.value === BrowserDefault
+                                                ? undefined
+                                                : {mimeType: e.target.value},
                                     }))
                                 }
-                                renderInput={(params) => (
-                                    <TextField {...params} label="Preferred Codec" />
-                                )}
-                            />
+                                fullWidth
+                            >
+                                <MenuItem value={BrowserDefault}>Browser Default</MenuItem>
+                                {NativeCodecs.map(({mimeType}) => (
+                                    <MenuItem key={mimeType} value={mimeType}>
+                                        {codecName(mimeType)}
+                                    </MenuItem>
+                                ))}
+                            </TextField>
+                            <TextField
+                                select
+                                label="Codec Preset"
+                                value={
+                                    selectedCodec?.presets.includes(preferCodec?.sdpFmtpLine ?? '')
+                                        ? preferCodec?.sdpFmtpLine
+                                        : BrowserDefault
+                                }
+                                disabled={!selectedCodec || selectedCodec.presets.length === 0}
+                                onChange={(e) =>
+                                    setSettingsInput((c) =>
+                                        c.preferCodec
+                                            ? {
+                                                  ...c,
+                                                  preferCodec: {
+                                                      mimeType: c.preferCodec.mimeType,
+                                                      sdpFmtpLine: e.target.value || undefined,
+                                                  },
+                                              }
+                                            : c
+                                    )
+                                }
+                                fullWidth
+                            >
+                                <MenuItem value={BrowserDefault}>Any</MenuItem>
+                                {selectedCodec?.presets.map((preset) => (
+                                    <MenuItem key={preset} value={preset}>
+                                        {presetName(selectedCodec.mimeType, preset)}
+                                    </MenuItem>
+                                ))}
+                            </TextField>
                         </Box>
                     ) : undefined}
                     <Box sx={{paddingTop: 1}}>
@@ -108,6 +137,16 @@ export const SettingDialog = ({open, setOpen, updateName, saveSettings}: Setting
                             min={1}
                             onChange={(framerate) => setSettingsInput((c) => ({...c, framerate}))}
                             value={framerate}
+                            fullWidth
+                        />
+                    </Box>
+                    <Box sx={{paddingTop: 1}}>
+                        <NumberField
+                            label="Max Bandwidth (kbit/s)"
+                            helperText="Per viewer. 0 = browser default (~2500 kbit/s at most)"
+                            min={0}
+                            onChange={(maxBitrate) => setSettingsInput((c) => ({...c, maxBitrate}))}
+                            value={maxBitrate}
                             fullWidth
                         />
                     </Box>

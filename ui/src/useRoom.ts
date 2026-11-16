@@ -10,7 +10,7 @@ import {
     RoomInfo,
     UIConfig,
 } from './message';
-import {loadSettings, resolveCodecPlaceholder} from './settings';
+import {loadSettings} from './settings';
 import {urlWithSlash} from './url';
 import {authModeToRoomMode} from './useConfig';
 import {getFromURL, useRoomID} from './useRoomID';
@@ -38,6 +38,32 @@ export interface UseRoom {
 
 const relayConfig: Partial<RTCConfiguration> =
     window.location.search.indexOf('forceTurn=true') !== -1 ? {iceTransportPolicy: 'relay'} : {};
+
+// Without an explicit maxBitrate, libwebrtc caps a single (non-simulcast) video
+// stream based on resolution, at most ~2.5 Mbit/s, which is too low for crisp
+// screen content.
+const applyMaxBitrate = async (peer: RTCPeerConnection) => {
+    const {maxBitrate} = loadSettings();
+    if (maxBitrate <= 0) {
+        return;
+    }
+    await Promise.all(
+        peer
+            .getSenders()
+            .filter((sender) => sender.track?.kind === 'video')
+            .map((sender) => {
+                const params = sender.getParameters();
+                if (!params.encodings?.length) {
+                    params.encodings = [{}];
+                }
+                params.encodings.forEach((encoding) => {
+                    encoding.maxBitrate = maxBitrate * 1000;
+                });
+                console.log('Setting max bitrate', maxBitrate, 'kbit/s');
+                return sender.setParameters(params);
+            })
+    );
+};
 
 const hostSession = async ({
     sid,
@@ -70,7 +96,7 @@ const hostSession = async ({
 
     stream.getTracks().forEach((track) => peer.addTrack(track, stream));
 
-    const preferCodec = resolveCodecPlaceholder(loadSettings().preferCodec);
+    const preferCodec = loadSettings().preferCodec;
     if (preferCodec) {
         const transceiver = peer
             .getTransceivers()
@@ -248,9 +274,16 @@ export const useRoom = (config: UIConfig): UseRoom => {
                             host.current[event.payload.sid]?.addIceCandidate(event.payload.value);
                             return;
                         case 'clientanswer':
-                            host.current[event.payload.sid]?.setRemoteDescription(
-                                event.payload.value
-                            );
+                            (async () => {
+                                const hostPeer = host.current[event.payload.sid];
+                                if (!hostPeer) {
+                                    return;
+                                }
+                                await hostPeer.setRemoteDescription(event.payload.value);
+                                await applyMaxBitrate(hostPeer).catch((e) =>
+                                    console.log('Could not set max bitrate', e)
+                                );
+                            })();
                             return;
                         case 'hostoffer':
                             (async () => {
